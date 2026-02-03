@@ -3,8 +3,27 @@
     "id": 1,
     "level": "info",
     "priority": 5,
-    "msg": "Example warning",
+    "msg": "I'm Zuuuuuum, your AI assistent for Zunalita",
+    "link": "https://zunalita.github.io/zuuuuuum",
+    "dismissable": true,
+    "active": true
+  },
+  {
+    "id": 2,
+    "level": "info",
+    "priority": 6,
+    "msg": "Welcome to your new Zunalita!",
+    "link": "https://zunalita.github.io/newzunalita",
+    "dismissable": true,
+    "active": true
+  },
+  {
+    "id": 3,
+    "level": "info",
+    "priority": 7,
+    "msg": "This is Zunalita Status Bar testing running on Zunalita static page",
     "link": "https://example.com",
+    "dismissable": true,
     "active": true
   }
 ]
