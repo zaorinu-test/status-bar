@@ -1,0 +1,10 @@
+[
+  {
+    "id": 1,
+    "level": "info",
+    "priority": 5,
+    "msg": "Example warning",
+    "link": "https://example.com",
+    "active": true
+  }
+]
