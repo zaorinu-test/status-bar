@@ -1,223 +1,167 @@
 /**
- * Dynamic Status Banner System - Smart Reading Edition (High Visibility)
+ * Dynamic Status Banner System - Desktop Only Edition
  */
 (function() {
     if (window.__STATUS_BANNER_RUNNING__) return;
+    
+    const CONFIG = {
+        BASE_DELAY: 5000, // Minimum time (ms) to show each message
+        READING_SPEED: 180, // Average reading speed in words per minute
+        TRANSITION_DURATION: 600, // Duration of the transition animations in ms
+        STORAGE_KEY: 'app_banner_system', // Key for localStorage
+        BANNER_COLOR: '#FFF2C6', // Background color of the banner
+        POLLING_INTERVAL: 60000, // How often to check for new messages (ms)
+        CACHE_TTL: 30 * 60 * 1000, // How long to cache messages before re-fetching (ms), in this case, 30 minutes
+        MOBILE_BREAKPOINT: 600 // The bar will be completely disabled on screens narrower than this width
+    };
+
+    // Immediately exit if on a mobile device to save resources, and add a CSS rule as a backup to ensure it's hidden on small screens. This way, even if the script is loaded, it won't display or consume resources unnecessarily on mobile devices.
+    if (window.innerWidth < CONFIG.MOBILE_BREAKPOINT) return;
     window.__STATUS_BANNER_RUNNING__ = true;
 
     const self = document.querySelector('script[data-status-bar]');
     const JSON_URL = self ? self.getAttribute('data-status-bar') : 'data.json';
 
-    const CONFIG = {
-        BASE_DELAY: 3000,
-        READING_SPEED: 180,
-        TRANSITION_DURATION: 600,
-        STORAGE_KEY: 'app_banner_system',
-        BANNER_COLOR: '#FFF2C6',
-        BAR_HEIGHT: '35px',
-        MIN_WIDTH_SAFE: 600,
-        CENTER_BREAKPOINT: 2500,
-        POLLING_INTERVAL: 60000
-    };
-
-    let state = {
-        alerts: [],
-        index: 0,
-        timer: null,
-        refreshTimer: null,
-        lock: false
-    };
-
-    const getHash = (str) => {
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-            hash = (hash << 5) - hash + str.charCodeAt(i);
-            hash |= 0;
-        }
-        return hash.toString(36);
-    };
-
-    const getReadingTime = (text) => {
-        const words = text.trim().split(/\s+/).length;
-        const readingMs = (words / CONFIG.READING_SPEED) * 60 * 1000;
-        return Math.max(CONFIG.BASE_DELAY, readingMs + 2000); 
-    };
+    let state = { alerts: [], index: 0, timer: null, lock: false };
 
     const store = {
-        get: () => {
-            try {
-                return JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || { cache: [], dismissed: {} };
-            } catch (e) { return { cache: [], dismissed: {} }; }
-        },
+        get: () => JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || { cache: [], dismissed: {}, lastFetch: 0 },
         save: (data) => localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data))
     };
 
-    function cleanup() {
-        if (state.timer) {
-            clearTimeout(state.timer);
-            state.timer = null;
-        }
-    }
+    // Simple hash function to generate a unique ID for each message based on its content. This allows us to track dismissed messages without needing a backend ID.
+    const getHash = (s) => [...s].reduce((h, c) => (h << 5) - h + c.charCodeAt(0) | 0, 0).toString(36);
+    const getReadingTime = (t) => Math.max(CONFIG.BASE_DELAY, ((t.split(/\s+/).length / CONFIG.READING_SPEED) * 60000) + 2000);
 
     function injectStyles() {
         if (document.getElementById('status-styles')) return;
         const style = document.createElement('style');
         style.id = 'status-styles';
         style.textContent = `
-            #status-bar {
-                position: fixed; top: 0; left: 0; width: 100%; height: ${CONFIG.BAR_HEIGHT};
-                z-index: 10000; overflow: hidden;
-                background-color: ${CONFIG.BANNER_COLOR};
-                transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
-                display: none; transform: translateY(-100%);
+            #status-bar { 
+                position: fixed; top: 0; left: 0; width: 100%; height: 35px; z-index: 10000; 
+                background: ${CONFIG.BANNER_COLOR}; transition: transform .6s cubic-bezier(.65,0,.35,1); 
+                display: none; transform: translateY(-100%); overflow: hidden;
+                display: flex; align-items: center; justify-content: flex-start; 
             }
-            @media (min-width: ${CONFIG.MIN_WIDTH_SAFE}px) {
-                #status-bar.is-visible { display: block; transform: translateY(0); }
+            
+            /* Hide on mobile devices */
+            @media (max-width: ${CONFIG.MOBILE_BREAKPOINT - 1}px) {
+                #status-bar { display: none !important; }
             }
-            #status-link {
-                display: flex; align-items: center; justify-content: flex-start;
-                width: 100%; height: 100%; padding: 0 30px; box-sizing: border-box;
-                color: #000000 !important; text-decoration: none !important;
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                font-size: 13.5px; 
-                font-weight: 500; 
-                letter-spacing: 0.02em;
-                -webkit-font-smoothing: antialiased;
-                -moz-osx-font-smoothing: grayscale;
-                transition: background 0.3s;
+            
+            #status-bar.is-visible { display: flex; transform: translateY(0); }
+            
+            #status-link { 
+                display: inline-flex; align-items: center; height: 100%; padding: 0 30px;
+                color: #000 !important; text-decoration: none !important; 
+                font: 500 13.5px sans-serif; cursor: pointer;
             }
-            @media (min-width: ${CONFIG.CENTER_BREAKPOINT}px) {
-                #status-link { justify-content: center; padding: 0 20px; }
-            }
-            #status-content { display: flex; align-items: center; gap: 10px; will-change: transform, opacity; }
+            
+            #status-content { display: flex; align-items: center; gap: 10px; transition: all .6s; }
+            .exit-down { transform: translateY(8px); opacity: 0; }
+            .enter-top { transform: translateY(-8px); opacity: 0; }
+            
+            .status-arrow-svg { width: 14px; transition: transform .4s; flex-shrink: 0; }
             #status-link:hover .status-text { text-decoration: underline; }
-            
-            .exit-down { animation: exitDown ${CONFIG.TRANSITION_DURATION}ms forwards cubic-bezier(0.65, 0, 0.35, 1); }
-            .enter-top { animation: enterTop ${CONFIG.TRANSITION_DURATION}ms forwards cubic-bezier(0.65, 0, 0.35, 1); }
-            
-            @keyframes exitDown { 
-                0% { transform: translateY(0); opacity: 1; filter: blur(0px); }
-                100% { transform: translateY(8px); opacity: 0; filter: blur(2px); }
-            }
-            @keyframes enterTop { 
-                0% { transform: translateY(-8px); opacity: 0; filter: blur(2px); }
-                100% { transform: translateY(0); opacity: 1; filter: blur(0px); }
-            }
-            
-            .status-arrow-svg { 
-                width: 14px; height: 14px; flex-shrink: 0; transition: transform 0.4s;
-            }
             #status-link:hover .status-arrow-svg { transform: translateX(5px); }
         `;
         document.head.appendChild(style);
     }
 
-    function scheduleNext() {
-        cleanup();
-        if (state.alerts.length <= 1) return;
-        const currentMsg = state.alerts[state.index].msg;
-        const displayTime = getReadingTime(currentMsg);
-        state.timer = setTimeout(() => {
-            if (!state.lock) {
-                state.index = (state.index + 1) % state.alerts.length;
-                updateUI();
-            }
-        }, displayTime);
-    }
-
     async function updateUI() {
         const bar = document.getElementById('status-bar');
-        const link = document.getElementById('status-link');
         const box = document.getElementById('status-content');
-        if (!bar || !link || !box || state.alerts.length === 0 || state.lock) return;
+        const link = document.getElementById('status-link');
+        
+        if (!state.alerts.length || window.innerWidth < CONFIG.MOBILE_BREAKPOINT) {
+            return bar?.classList.remove('is-visible');
+        }
 
-        const current = state.alerts[state.index];
-        const applyData = () => {
+        if (state.lock || !box) return;
+        const current = state.alerts[state.index % state.alerts.length];
+        
+        const apply = () => {
             link.href = current.link || '#';
-            box.innerHTML = `
-                <span class="status-text">${current.msg}</span>
-                <svg class="status-arrow-svg" viewBox="0 0 18 12" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12.6 1.27L16.6 5.77L12.6 10.27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    <path d="M1.6 5.77H16.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            `;
+            box.innerHTML = `<span class="status-text"></span>
+                <svg class="status-arrow-svg" viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M12.6 1.27L16.6 5.77L12.6 10.27M1.6 5.77H16.6"/>
+                </svg>`;
+            box.querySelector('.status-text').textContent = current.msg.slice(0, 200);
             link.onclick = () => {
                 if (current.dismissable) {
-                    const disk = store.get();
-                    disk.dismissed[current.id] = Date.now();
-                    store.save(disk);
+                    const d = store.get(); d.dismissed[current.id] = Date.now(); store.save(d);
                 }
             };
         };
 
-        if (state.alerts.length > 1 && box.textContent.trim() !== "") {
+        if (bar.classList.contains('is-visible') && state.alerts.length > 1) {
             state.lock = true;
-            box.className = 'exit-down';
+            box.classList.add('exit-down');
             setTimeout(() => {
-                applyData();
+                apply();
                 box.className = 'enter-top';
-                setTimeout(() => { 
-                    box.className = ''; 
-                    state.lock = false; 
-                    scheduleNext();
-                }, CONFIG.TRANSITION_DURATION);
-            }, CONFIG.TRANSITION_DURATION * 0.7);
+                setTimeout(() => { box.className = ''; state.lock = false; rotate(); }, 50);
+            }, CONFIG.TRANSITION_DURATION);
         } else {
-            applyData();
+            apply();
             bar.classList.add('is-visible');
-            scheduleNext();
+            rotate();
         }
     }
 
-    async function init(isUpdate = false) {
-        if (!isUpdate) cleanup();
-        const disk = store.get();
-        let data = disk.cache || [];
+    function rotate() {
+        clearTimeout(state.timer);
+        if (state.alerts.length > 1) {
+            state.timer = setTimeout(() => {
+                state.index++;
+                updateUI();
+            }, getReadingTime(state.alerts[state.index % state.alerts.length].msg));
+        }
+    }
 
-        const fetchData = async () => {
-            try {
-                const resp = await fetch(`${JSON_URL}?t=${Date.now()}`);
-                if (!resp.ok) return;
-                const freshData = await resp.json();
-                if (JSON.stringify(freshData) !== JSON.stringify(data)) {
-                    disk.cache = freshData;
-                    store.save(disk);
-                    init(true);
+    async function sync(forceFetch = false) {
+        if (window.innerWidth < CONFIG.MOBILE_BREAKPOINT) return;
+
+        const disk = store.get();
+        const shouldFetch = forceFetch || (Date.now() - disk.lastFetch > CONFIG.CACHE_TTL);
+
+        const process = (data) => {
+            const filtered = data.filter(i => i.active && !disk.dismissed[(i.id = getHash(i.msg))]);
+            if (JSON.stringify(filtered) !== JSON.stringify(state.alerts)) {
+                state.alerts = filtered;
+                state.index = 0;
+                if (state.alerts.length && !document.getElementById('status-bar')) {
+                    injectStyles();
+                    document.body.insertAdjacentHTML('afterbegin', 
+                        '<div id="status-bar"><a id="status-link" target="_blank" rel="noopener"><div id="status-content"></div></a></div>'
+                    );
                 }
-            } catch (e) { console.error("Banner fetch failed", e); }
+                updateUI();
+            }
         };
 
-        state.alerts = data.filter(item => {
-            if (!item.active) return false;
-            item.id = getHash(item.msg);
-            return !disk.dismissed[item.id];
-        });
+        process(disk.cache);
 
-        let bar = document.getElementById('status-bar');
-        if (state.alerts.length === 0) {
-            if (bar) {
-                bar.classList.remove('is-visible');
-                setTimeout(() => bar.remove(), 600);
-            }
-            if (!isUpdate) fetchData();
-            return;
+        if (shouldFetch) {
+            try {
+                const r = await fetch(`${JSON_URL}?t=${Date.now()}`);
+                if (r.ok) {
+                    const fresh = await r.json();
+                    disk.cache = fresh;
+                    disk.lastFetch = Date.now();
+                    store.save(disk);
+                    process(fresh);
+                }
+            } catch (e) { console.error("Banner sync failed", e); }
         }
-
-        if (!bar) {
-            injectStyles();
-            bar = document.createElement('div');
-            bar.id = 'status-bar';
-            bar.innerHTML = '<a id="status-link" target="_blank" rel="noopener"><div id="status-content"></div></a>';
-            if (document.body) document.body.prepend(bar);
-        }
-
-        updateUI();
-        if (!isUpdate) fetchData();
     }
 
-    if (document.body) init();
-    else window.addEventListener('DOMContentLoaded', () => init(), { once: true });
-    
-    if (state.refreshTimer) clearInterval(state.refreshTimer);
-    state.refreshTimer = setInterval(() => init(true), CONFIG.POLLING_INTERVAL);
+    const start = () => {
+        sync();
+        setInterval(() => sync(true), CONFIG.POLLING_INTERVAL);
+    };
+
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
 })();
