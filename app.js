@@ -1,157 +1,223 @@
 /**
- * Dynamic Status Banner System - Left-Aligned & Animated
+ * Dynamic Status Banner System - Smart Reading Edition (High Visibility)
  */
+(function() {
+    if (window.__STATUS_BANNER_RUNNING__) return;
+    window.__STATUS_BANNER_RUNNING__ = true;
 
-const CONFIG = {
-    URL: 'data.json',
-    CACHE_DURATION: 10 * 60 * 1000, 
-    CLEANUP_THRESHOLD: 7 * 24 * 60 * 60 * 1000, 
-    ROTATION_SPEED: 10000, 
-    STORAGE_KEY: 'app_banner_system'
-};
+    const self = document.querySelector('script[data-status-bar]');
+    const JSON_URL = self ? self.getAttribute('data-status-bar') : 'data.json';
 
-const COLORS = {
-    danger: '#d32f2f',
-    warning: '#fbc02d',
-    info: '#0033cc',
-    default: '#333333'
-};
-
-let state = { activeAlerts: [], currentIndex: 0, rotationInterval: null };
-
-document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
-
-async function init() {
-    await fetchStatus();
-    startRotation();
-    setInterval(fetchStatus, 60000); 
-}
-
-const store = {
-    get: () => JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || { lastFetch: 0, cache: [], dismissed: {} },
-    save: (data) => localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify({ ...store.get(), ...data }))
-};
-
-function cleanDismissedCache(dismissedMap) {
-    const now = Date.now();
-    const cleaned = {};
-    let changed = false;
-    for (const [id, timestamp] of Object.entries(dismissedMap)) {
-        if (now - timestamp < CONFIG.CLEANUP_THRESHOLD) cleaned[id] = timestamp;
-        else changed = true;
-    }
-    return { cleaned, changed };
-}
-
-async function fetchStatus() {
-    const now = Date.now();
-    const disk = store.get();
-    let data = [];
-
-    const { cleaned, changed } = cleanDismissedCache(disk.dismissed);
-    if (changed) store.save({ dismissed: cleaned });
-
-    if (disk.cache.length > 0 && (now - disk.lastFetch < CONFIG.CACHE_DURATION)) {
-        data = disk.cache;
-    } else {
-        try {
-            const response = await fetch(`${CONFIG.URL}?t=${now}`);
-            if (!response.ok) throw new Error();
-            data = await response.json();
-            store.save({ cache: data, lastFetch: now });
-        } catch (e) {
-            data = disk.cache || [];
-        }
-    }
-
-    state.activeAlerts = data
-        .filter(item => item.active && !cleaned[item.id.toString()])
-        .sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-    renderManager();
-}
-
-function renderManager() {
-    let banner = document.getElementById('status-bar');
-    if (state.activeAlerts.length === 0) {
-        if (banner) banner.remove();
-        return;
-    }
-
-    if (!banner) {
-        banner = document.createElement('div');
-        banner.id = 'status-bar';
-        // Changed to flex-start and added padding-left for the "gap"
-        banner.style.cssText = `
-            position: fixed; top: -40px; left: 0; width: 100%; height: 32px;
-            z-index: 10000; display: flex; align-items: center; justify-content: flex-start;
-            padding: 0 20px; box-sizing: border-box;
-            color: #ffffff; font-family: 'Inter', system-ui, sans-serif;
-            font-size: 13px; font-weight: 500; cursor: pointer;
-            transition: background-color 0.5s ease, top 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-            text-decoration: none;
-        `;
-
-        banner.onmouseenter = () => banner.style.textDecoration = 'underline';
-        banner.onmouseleave = () => banner.style.textDecoration = 'none';
-
-        const content = document.createElement('div');
-        content.id = 'status-content';
-        content.style.transition = 'opacity 0.4s ease';
-        
-        banner.appendChild(content);
-        document.body.prepend(banner);
-
-        // Slide Down Trigger
-        setTimeout(() => banner.style.top = '0', 100);
-    }
-    updateContent();
-}
-
-function updateContent() {
-    const banner = document.getElementById('status-bar');
-    const content = document.getElementById('status-content');
-    if (!banner || !content || state.activeAlerts.length === 0) return;
-
-    const current = state.activeAlerts[state.currentIndex];
-
-    const apply = () => {
-        banner.style.backgroundColor = COLORS[current.level] || COLORS.default;
-        content.innerHTML = `${current.msg} <span style="margin-left:5px; opacity:0.7">→</span>`;
-        banner.onclick = () => {
-            if (current.link) {
-                window.open(current.link, '_blank');
-                if (current.dismissable) dismiss(current.id);
-            }
-        };
+    const CONFIG = {
+        BASE_DELAY: 3000,
+        READING_SPEED: 180,
+        TRANSITION_DURATION: 600,
+        STORAGE_KEY: 'app_banner_system',
+        BANNER_COLOR: '#FFF2C6',
+        BAR_HEIGHT: '35px',
+        MIN_WIDTH_SAFE: 600,
+        CENTER_BREAKPOINT: 2500,
+        POLLING_INTERVAL: 60000
     };
 
-    if (state.activeAlerts.length === 1) {
-        apply();
-        content.style.opacity = '1';
-    } else {
-        content.style.opacity = '0';
-        setTimeout(() => {
-            apply();
-            content.style.opacity = '1';
-        }, 400);
-    }
-}
+    let state = {
+        alerts: [],
+        index: 0,
+        timer: null,
+        refreshTimer: null,
+        lock: false
+    };
 
-function dismiss(id) {
-    const disk = store.get();
-    disk.dismissed[id.toString()] = Date.now();
-    store.save({ dismissed: disk.dismissed });
-    fetchStatus(); 
-}
-
-function startRotation() {
-    if (state.rotationInterval) clearInterval(state.rotationInterval);
-    state.rotationInterval = setInterval(() => {
-        if (state.activeAlerts.length > 1) {
-            state.currentIndex = (state.currentIndex + 1) % state.activeAlerts.length;
-            updateContent();
+    const getHash = (str) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = (hash << 5) - hash + str.charCodeAt(i);
+            hash |= 0;
         }
-    }, CONFIG.ROTATION_SPEED);
-}
+        return hash.toString(36);
+    };
+
+    const getReadingTime = (text) => {
+        const words = text.trim().split(/\s+/).length;
+        const readingMs = (words / CONFIG.READING_SPEED) * 60 * 1000;
+        return Math.max(CONFIG.BASE_DELAY, readingMs + 2000); 
+    };
+
+    const store = {
+        get: () => {
+            try {
+                return JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)) || { cache: [], dismissed: {} };
+            } catch (e) { return { cache: [], dismissed: {} }; }
+        },
+        save: (data) => localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(data))
+    };
+
+    function cleanup() {
+        if (state.timer) {
+            clearTimeout(state.timer);
+            state.timer = null;
+        }
+    }
+
+    function injectStyles() {
+        if (document.getElementById('status-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'status-styles';
+        style.textContent = `
+            #status-bar {
+                position: fixed; top: 0; left: 0; width: 100%; height: ${CONFIG.BAR_HEIGHT};
+                z-index: 10000; overflow: hidden;
+                background-color: ${CONFIG.BANNER_COLOR};
+                transition: transform 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+                display: none; transform: translateY(-100%);
+            }
+            @media (min-width: ${CONFIG.MIN_WIDTH_SAFE}px) {
+                #status-bar.is-visible { display: block; transform: translateY(0); }
+            }
+            #status-link {
+                display: flex; align-items: center; justify-content: flex-start;
+                width: 100%; height: 100%; padding: 0 30px; box-sizing: border-box;
+                color: #000000 !important; text-decoration: none !important;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 13.5px; 
+                font-weight: 500; 
+                letter-spacing: 0.02em;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+                transition: background 0.3s;
+            }
+            @media (min-width: ${CONFIG.CENTER_BREAKPOINT}px) {
+                #status-link { justify-content: center; padding: 0 20px; }
+            }
+            #status-content { display: flex; align-items: center; gap: 10px; will-change: transform, opacity; }
+            #status-link:hover .status-text { text-decoration: underline; }
+            
+            .exit-down { animation: exitDown ${CONFIG.TRANSITION_DURATION}ms forwards cubic-bezier(0.65, 0, 0.35, 1); }
+            .enter-top { animation: enterTop ${CONFIG.TRANSITION_DURATION}ms forwards cubic-bezier(0.65, 0, 0.35, 1); }
+            
+            @keyframes exitDown { 
+                0% { transform: translateY(0); opacity: 1; filter: blur(0px); }
+                100% { transform: translateY(8px); opacity: 0; filter: blur(2px); }
+            }
+            @keyframes enterTop { 
+                0% { transform: translateY(-8px); opacity: 0; filter: blur(2px); }
+                100% { transform: translateY(0); opacity: 1; filter: blur(0px); }
+            }
+            
+            .status-arrow-svg { 
+                width: 14px; height: 14px; flex-shrink: 0; transition: transform 0.4s;
+            }
+            #status-link:hover .status-arrow-svg { transform: translateX(5px); }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function scheduleNext() {
+        cleanup();
+        if (state.alerts.length <= 1) return;
+        const currentMsg = state.alerts[state.index].msg;
+        const displayTime = getReadingTime(currentMsg);
+        state.timer = setTimeout(() => {
+            if (!state.lock) {
+                state.index = (state.index + 1) % state.alerts.length;
+                updateUI();
+            }
+        }, displayTime);
+    }
+
+    async function updateUI() {
+        const bar = document.getElementById('status-bar');
+        const link = document.getElementById('status-link');
+        const box = document.getElementById('status-content');
+        if (!bar || !link || !box || state.alerts.length === 0 || state.lock) return;
+
+        const current = state.alerts[state.index];
+        const applyData = () => {
+            link.href = current.link || '#';
+            box.innerHTML = `
+                <span class="status-text">${current.msg}</span>
+                <svg class="status-arrow-svg" viewBox="0 0 18 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12.6 1.27L16.6 5.77L12.6 10.27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M1.6 5.77H16.6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            `;
+            link.onclick = () => {
+                if (current.dismissable) {
+                    const disk = store.get();
+                    disk.dismissed[current.id] = Date.now();
+                    store.save(disk);
+                }
+            };
+        };
+
+        if (state.alerts.length > 1 && box.textContent.trim() !== "") {
+            state.lock = true;
+            box.className = 'exit-down';
+            setTimeout(() => {
+                applyData();
+                box.className = 'enter-top';
+                setTimeout(() => { 
+                    box.className = ''; 
+                    state.lock = false; 
+                    scheduleNext();
+                }, CONFIG.TRANSITION_DURATION);
+            }, CONFIG.TRANSITION_DURATION * 0.7);
+        } else {
+            applyData();
+            bar.classList.add('is-visible');
+            scheduleNext();
+        }
+    }
+
+    async function init(isUpdate = false) {
+        if (!isUpdate) cleanup();
+        const disk = store.get();
+        let data = disk.cache || [];
+
+        const fetchData = async () => {
+            try {
+                const resp = await fetch(`${JSON_URL}?t=${Date.now()}`);
+                if (!resp.ok) return;
+                const freshData = await resp.json();
+                if (JSON.stringify(freshData) !== JSON.stringify(data)) {
+                    disk.cache = freshData;
+                    store.save(disk);
+                    init(true);
+                }
+            } catch (e) { console.error("Banner fetch failed", e); }
+        };
+
+        state.alerts = data.filter(item => {
+            if (!item.active) return false;
+            item.id = getHash(item.msg);
+            return !disk.dismissed[item.id];
+        });
+
+        let bar = document.getElementById('status-bar');
+        if (state.alerts.length === 0) {
+            if (bar) {
+                bar.classList.remove('is-visible');
+                setTimeout(() => bar.remove(), 600);
+            }
+            if (!isUpdate) fetchData();
+            return;
+        }
+
+        if (!bar) {
+            injectStyles();
+            bar = document.createElement('div');
+            bar.id = 'status-bar';
+            bar.innerHTML = '<a id="status-link" target="_blank" rel="noopener"><div id="status-content"></div></a>';
+            if (document.body) document.body.prepend(bar);
+        }
+
+        updateUI();
+        if (!isUpdate) fetchData();
+    }
+
+    if (document.body) init();
+    else window.addEventListener('DOMContentLoaded', () => init(), { once: true });
+    
+    if (state.refreshTimer) clearInterval(state.refreshTimer);
+    state.refreshTimer = setInterval(() => init(true), CONFIG.POLLING_INTERVAL);
+})();

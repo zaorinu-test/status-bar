@@ -1,29 +1,18 @@
 [
   {
-    "id": 1,
-    "level": "info",
-    "priority": 5,
-    "msg": "I'm Zuuuuuum, your AI assistent for Zunalita",
-    "link": "https://zunalita.github.io/zuuuuuum",
-    "dismissable": true,
+    "msg": "Korebii Announcement: Your digital assistant for everything is now available!",
+    "link": "https://example.com/korebii",
     "active": true
   },
   {
-    "id": 2,
-    "level": "info",
-    "priority": 6,
-    "msg": "Welcome to your new Zunalita!",
-    "link": "https://zunalita.github.io/newzunalita",
-    "dismissable": true,
-    "active": true
+    "msg": "What the Brazillian Duck said to another Brazillian duck? Quackié? Lol!",
+    "link": "https://example.com/quackduck",
+    "active": true,
+    "dismissable": true
   },
   {
-    "id": 3,
-    "level": "info",
-    "priority": 7,
-    "msg": "This is Zunalita Status Bar testing running on Zunalita static page",
+    "msg": "Create your own status bar messages with this solution editing the data.json file.",
     "link": "https://example.com",
-    "dismissable": true,
     "active": true
   }
 ]
