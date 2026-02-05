@@ -158,7 +158,9 @@
 
         if (force || !d.lastFetch || now - d.lastFetch > CONFIG.TTL) {
             try {
-                const r = await fetch(`${JSON_URL}?t=${now}`);
+
+                const r = await fetch(`${JSON_URL}?timestamp=${now}&source=status-bar`);
+
                 if (r.ok) {
                     const fresh = await r.json();
                     d.cache = fresh;
@@ -172,7 +174,7 @@
 
     const init = () => {
         sync();
-        setInterval(() => sync(true), CONFIG.POLL);
+        setInterval(() => sync(), CONFIG.POLL); // Add true in sync() to force loading from server
     };
 
     if (document.readyState === "complete") init();
